@@ -15,6 +15,4 @@ COPY . .
 # Создание папок для сохранения данных и сессий
 RUN mkdir -p sessions data
 
-VOLUME ["/app/sessions", "/app/data"]
-
 CMD ["python", "main.py"]
