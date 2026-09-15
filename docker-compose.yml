@@ -1,0 +1,10 @@
+services:
+  telegram_saas_bot:
+    build: .
+    container_name: telegram_saas_broadcaster
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./sessions:/app/sessions
+      - ./data:/app/data
