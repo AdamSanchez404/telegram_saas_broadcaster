@@ -8,7 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, STRING_SESSION, TELEGRAM_API_ID, TELEGRAM_API_HASH
 import database as db
 from auth_handlers import router as auth_router
 from bot_handlers import router as bot_router
@@ -39,22 +39,28 @@ async def cmd_start(message: Message):
     user = await db.get_or_create_user(user_id)
     
     first_name = message.from_user.first_name or "Пользователь"
-    is_auth = bool(user.get("is_authorized"))
+    
+    # Проверяем авторизацию, включая переменную окружения STRING_SESSION
+    is_auth = bool(user.get("is_authorized") or user.get("session_string") or STRING_SESSION)
+    if is_auth and not user.get("is_authorized"):
+        await db.update_user_auth(user_id, user.get("phone") or "", session_string=STRING_SESSION, is_authorized=True)
+        user["is_authorized"] = 1
+
     is_broadcasting = bool(user.get("is_broadcasting"))
 
-    auth_status_text = "🟢 <b>Аккаунт подключен</b>" if is_auth else "🔴 <b>Аккаунт не подключен</b>"
+    auth_status_text = "🟢 <b>Аккаунт подключен (StringSession)</b>" if is_auth else "🔴 <b>Аккаунт не подключен</b>"
     broadcast_status_text = "🚀 <b>Рассылка активна</b>" if is_broadcasting else "🛑 <b>Рассылка остановлена</b>"
 
     welcome_text = (
         f"👋 Здравствуйте, <b>{first_name}</b>!\n\n"
         "Добро пожаловать в <b>SaaS Telegram Broadcaster</b> — сервис автоматической "
-        "рассылки логистических заявок по вашим группам и чатам.\n\n"
+        "рассылки сообщений по вашим группам и чатам.\n\n"
         f"• Статус сессии: {auth_status_text}\n"
         f"• Статус рассылки: {broadcast_status_text}\n"
         f"• Интервал: <b>{user.get('interval_minutes', 30)} минут</b>\n\n"
         "📌 <b>Быстрый старт:</b>\n"
-        "1. Нажмите <b>📱 Подключить аккаунт</b> и авторизуйтесь.\n"
-        "2. Нажмите <b>✍️ Написать объявление с AI</b> для генерации заявки через Gemini 2.5 Flash.\n"
+        "1. Нажмите <b>📱 Подключить аккаунт</b> и авторизуйтесь (сессия сохранится в памяти StringSession).\n"
+        "2. Нажмите <b>✍️ Написать объявление с AI</b> для генерации текста.\n"
         "3. Нажмите <b>🚀 Запустить рассылку</b> для старта фонового диспетчера."
     )
 
@@ -79,6 +85,11 @@ async def main():
     # Инициализация базы данных
     logger.info("Инициализация базы данных SQLite...")
     await db.init_db()
+
+    if STRING_SESSION:
+        logger.info("✅ STRING_SESSION обнаружена в переменных окружения (режим Cloud / Stateless).")
+    else:
+        logger.info("ℹ️ STRING_SESSION не задана в окружении. Авторизация доступна через бота или локальный скрипт.")
 
     # Инициализация бота для aiogram 3.7+
     bot = Bot(

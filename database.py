@@ -6,7 +6,8 @@ from config import DATABASE_PATH, DEFAULT_INTERVAL_MINUTES
 async def init_db() -> None:
     """
     Инициализация таблиц базы данных SQLite.
-    Создает таблицы users и logs, если они отсутствуют.
+    Создает таблицы users и logs, если они отсутствуют,
+    и выполняет автоматические миграции колонок при необходимости.
     """
     async with aiosqlite.connect(DATABASE_PATH) as db:
         # Таблица пользователей сервиса
@@ -15,6 +16,7 @@ async def init_db() -> None:
                 telegram_id INTEGER PRIMARY KEY,
                 phone TEXT,
                 session_path TEXT,
+                session_string TEXT,
                 is_authorized INTEGER DEFAULT 0,
                 ad_text TEXT,
                 raw_ad_text TEXT,
@@ -25,6 +27,13 @@ async def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # Миграция: добавляем session_string в существующую таблицу users, если её еще нет
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN session_string TEXT")
+        except Exception:
+            # Колонка уже существует, ничего делать не нужно
+            pass
 
         # Таблица логов рассылки по группам
         await db.execute("""
@@ -59,16 +68,27 @@ async def get_or_create_user(telegram_id: int) -> Dict[str, Any]:
             
         return dict(user)
 
-async def update_user_auth(telegram_id: int, phone: str, session_path: str, is_authorized: bool = True) -> None:
-    """Обновляет статус авторизации и путь к Telethon-сессии."""
+async def update_user_auth(
+    telegram_id: int,
+    phone: str,
+    session_string: Optional[str] = None,
+    session_path: Optional[str] = None,
+    is_authorized: bool = True
+) -> None:
+    """
+    Обновляет статус авторизации и Telethon StringSession (или путь к .session файлу).
+    """
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
             """
             UPDATE users 
-            SET phone = ?, session_path = ?, is_authorized = ? 
+            SET phone = ?, 
+                session_string = COALESCE(?, session_string),
+                session_path = COALESCE(?, session_path),
+                is_authorized = ? 
             WHERE telegram_id = ?
             """,
-            (phone, session_path, 1 if is_authorized else 0, telegram_id)
+            (phone, session_string, session_path, 1 if is_authorized else 0, telegram_id)
         )
         await db.commit()
 
@@ -78,7 +98,7 @@ async def delete_user_auth(telegram_id: int) -> None:
         await db.execute(
             """
             UPDATE users 
-            SET phone = NULL, session_path = NULL, is_authorized = 0, is_broadcasting = 0 
+            SET phone = NULL, session_string = NULL, session_path = NULL, is_authorized = 0, is_broadcasting = 0 
             WHERE telegram_id = ?
             """,
             (telegram_id,)
@@ -117,7 +137,7 @@ async def get_active_broadcasters() -> List[Dict[str, Any]]:
     Возвращает список пользователей, у которых:
     - подключена сессия (is_authorized = 1)
     - включена рассылка (is_broadcasting = 1)
-    - задан текст объявления (ad_text IS NOT NULL)
+    - задан текст объявления (ad_text IS NOT NULL и не пустой)
     - подошло время очередной отправки (now - last_broadcast_at >= interval_minutes * 60)
     """
     current_timestamp = int(time.time())
@@ -136,7 +156,7 @@ async def get_active_broadcasters() -> List[Dict[str, Any]]:
         return [dict(row) for row in rows]
 
 async def update_last_broadcast(telegram_id: int, new_sent_count: int = 0) -> None:
-    """Обновляет отметку времени последней рассылки и увеличивает счетчик."""
+    """Обновляет отметку времени последней рассылки и увеличивает счетчик отправленных сообщений."""
     current_timestamp = int(time.time())
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(

@@ -183,6 +183,8 @@ async def back_to_menu(callback: CallbackQuery):
     """Возврат в меню из инлайн-клавиатуры."""
     await callback.message.delete()
 
+from config import STRING_SESSION
+
 @router.message(F.text.in_(["🚀 Запустить рассылку", "🛑 Остановить рассылку"]))
 async def toggle_broadcasting_handler(message: Message):
     """
@@ -196,11 +198,17 @@ async def toggle_broadcasting_handler(message: Message):
     if not is_currently_broadcasting:
         # Пытаемся запустить
         if not user.get("is_authorized"):
-            await message.answer(
-                "❌ <b>Нельзя запустить рассылку!</b>\n\n"
-                "Сначала подключите ваш личный Telegram-аккаунт через кнопку <b>📱 Подключить аккаунт</b>."
-            )
-            return
+            # Если STRING_SESSION задана на уровне окружения хостинга, авторизуем автоматически
+            if STRING_SESSION:
+                await db.update_user_auth(user_id, user.get("phone") or "", session_string=STRING_SESSION, is_authorized=True)
+                user["is_authorized"] = 1
+            else:
+                await message.answer(
+                    "❌ <b>Нельзя запустить рассылку!</b>\n\n"
+                    "Сначала подключите ваш личный Telegram-аккаунт через кнопку <b>📱 Подключить аккаунт</b> "
+                    "или укажите переменную <code>STRING_SESSION</code> в настройках хостинга."
+                )
+                return
 
         if not user.get("ad_text"):
             await message.answer(
@@ -214,7 +222,7 @@ async def toggle_broadcasting_handler(message: Message):
             "🚀 <b>Автоматическая рассылка успешно запущена!</b>\n\n"
             f"• Интервал отправки: <b>каждые {user.get('interval_minutes')} мин.</b>\n"
             "• Диспетчер рассылки отправляет сообщение по всем группам вашего аккаунта.\n"
-            "• Между группами автоматически выдерживается безопасная пауза для защиты от FloodWait.",
+            "• Между группами автоматически выдерживается безопасная пауза и пакетный тайминг для защиты от FloodWait.",
             reply_markup=get_main_menu(is_broadcasting=True, is_authorized=True)
         )
     else:
@@ -233,16 +241,31 @@ async def show_statistics(message: Message):
     user = await db.get_or_create_user(user_id)
     logs = await db.get_recent_logs(user_id, limit=5)
 
+    is_auth = bool(user.get("is_authorized") or STRING_SESSION)
     status_str = "🟢 Активна" if user.get("is_broadcasting") else "🔴 Остановлена"
-    auth_str = "Подключен ✅" if user.get("is_authorized") else "Не подключен ❌"
+    
+    if user.get("session_string") or STRING_SESSION:
+        auth_str = "Подключен (StringSession) ✅"
+    elif user.get("session_path"):
+        auth_str = "Подключен (.session файл) ✅"
+    else:
+        auth_str = "Не подключен ❌"
 
     logs_text = ""
     if logs:
         logs_text = "\n<b>Последние отправки:</b>\n"
         for log in logs:
-            icon = "✅" if log['status'] == "success" else "⚠️"
+            status = log['status']
+            if status == "success":
+                icon = "✅"
+            elif status in ("flood_wait", "slow_mode"):
+                icon = "⏳"
+            elif status == "peer_flood":
+                icon = "🚨"
+            else:
+                icon = "⚠️"
             title = log['chat_title'] or f"Чат {log.get('chat_id')}"
-            logs_text += f"{icon} {title}: {log['status']} ({log['created_at']})\n"
+            logs_text += f"{icon} {title}: {status} ({log['created_at']})\n"
     else:
         logs_text = "\n<i>Журнал отправок пока пуст.</i>"
 
@@ -261,10 +284,12 @@ async def show_help(message: Message):
     await message.answer(
         "ℹ️ <b>Инструкция по работе с SaaS-ботом:</b>\n\n"
         "1. <b>Подключите аккаунт</b>: отправьте ваш номер и код подтверждения от Telegram. "
-        "Сессия безопасно сохранится в изолированном файле.\n"
-        "2. <b>Создайте объявление</b>: напишите диспетчерскую заявку в свободной форме, "
-        "а Gemini 2.5 Flash оформит ее с эмодзи и контактами.\n"
-        "3. <b>Настройте тайминг</b>: задайте интервал (рекомендуется 30–60 минут).\n"
-        "4. <b>Запустите рассылку</b>: бот будет сам отправлять сообщения по всем вашим рабочим чатам, "
-        "соблюдая паузы между группами для предотвращения банов."
+        "Сессия генерируется в формате <code>StringSession</code> в памяти и не требует локальных файлов сессии.\n"
+        "2. <b>Облачный хостинг</b>: если хостинг не имеет постоянного диска (Render, Railway и др.), "
+        "скопируйте выданный ботом <code>STRING_SESSION</code> в переменные окружения хостинга.\n"
+        "3. <b>Создайте объявление</b>: напишите текст в свободной форме для структурирования.\n"
+        "4. <b>Настройте тайминг</b>: задайте интервал (рекомендуется 30–60 минут).\n"
+        "5. <b>Запустите рассылку</b>: бот сам отправляет сообщения по рабочим группам, "
+        "соблюдая паузы между группами и перехватывая FloodWait/PeerFlood для защиты от блокировок."
     )
+
