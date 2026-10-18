@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # ID администратора (опционально)
     ADMIN_ID: Optional[int] = Field(default=None, description="Telegram ID администратора")
 
+    # Порт для встроенного HTTP веб-сервера (Render.com Web Service)
+    PORT: int = Field(default=10000, description="Порт встроенного веб-сервера для Render.com")
+
     # Базовые директории
     BASE_DIR: Path = Path(__file__).resolve().parent
     DATA_DIR: Path = Path(__file__).resolve().parent / "data"
@@ -63,6 +66,7 @@ DEFAULT_INTERVAL_MINUTES: int = settings.DEFAULT_INTERVAL_MINUTES
 BATCH_SIZE: int = settings.BATCH_SIZE
 BATCH_PAUSE_SEC: float = settings.BATCH_PAUSE_SEC
 ADMIN_ID: Optional[int] = settings.ADMIN_ID
+PORT: int = settings.PORT
 
 BASE_DIR: Path = settings.BASE_DIR
 DATA_DIR: Path = settings.DATA_DIR

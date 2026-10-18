@@ -15,4 +15,6 @@ COPY . .
 # Создание папок для сохранения данных и сессий
 RUN mkdir -p sessions data
 
+EXPOSE 10000
+
 CMD ["python", "main.py"]
